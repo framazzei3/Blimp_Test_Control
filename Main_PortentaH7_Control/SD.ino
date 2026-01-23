@@ -32,13 +32,15 @@ void initSDCard() {
 }
 
 void writeCSVHeader(FILE* file) {
-    // fprintf(file, "Timestamp_ms,NTP_DateTime,ControlMode,");
     fprintf(file,
-    "millis,time,mode,"
-    // "posX,posY,posZ,roll,pitch,yaw,"
-    "dt_control,v_raw,v_hat,v_ref,z_ref,z_meas,"
-    "u_intVertical,u_pi,"
-    "leftThrust,rightThrust,verticalThrust\n"
+        "millis,time,mode,"
+        "bat_voltage,bat_percent,"
+        "dt,"
+        "v_raw,v_hat,v_ref,"
+        "z_ref,z_meas,"
+        "int_ev,u_pi,"
+        "tof_alt,"
+        "leftThrust,rightThrust,verticalThrust\n"
     );
 
 }
@@ -91,31 +93,37 @@ void logSensorData() {
 
     // Battery data
     fprintf(file, "%.2f,%.1f,",
-            batteryStatus.voltage, 
+            batteryStatus.voltage,
             batteryStatus.percent);
 
-    // Position and orientation
-    // fprintf(file, "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,",
-    //         mocapData.posX, mocapData.posY, mocapData.posZ,
-    //         mocapData.roll, mocapData.pitch, mocapData.yaw);
+    // Control timing
+    fprintf(file, "%.4f,", dt);
 
+    // Velocity
+    fprintf(file, "%.4f,%.4f,%.4f,",
+            v_raw,
+            v_hat,
+            v_ref);
 
-    fprintf(file, "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,",
-            dt,
-            v_raw,         // velocità non filtrata
-            v_hat,         // velocità filtrata
-            v_ref,         // target velocità
-            z_ref,         // quota target
-            z_meas, // quota misurata
-            u_intVertical, // integratore
-            u_pi           // u
-    );
+    // Altitude
+    fprintf(file, "%.4f,%.4f,",
+            z_ref,
+            z_meas);
 
-        // ToF (VL53L4CX)
-    fprintf(file, "%.3f,", tofAltitude_m);   // altitudine misurata dal sensore ToF (metri)
+    // PI controller
+    fprintf(file, "%.4f,%.4f,",
+            int_ev,
+            u_pi);
 
-    // motor trhusts in manual mode
-    fprintf(file, "%.3f,%.3f,%.3f\n", leftThrust, rightThrust, verticalThrust);
+    // ToF altitude
+    fprintf(file, "%.4f,",
+            tofAltitude_m);
+
+    // Motor thrusts
+    fprintf(file, "%.4f,%.4f,%.4f\n",
+            leftThrust,
+            rightThrust,
+            verticalThrust);
    
     fflush(file);
     fclose(file);

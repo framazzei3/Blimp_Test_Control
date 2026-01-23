@@ -121,8 +121,6 @@ struct MotionCaptureData {
 };
 
 MotionCaptureData mocapData;
-
-// ======== Parametri ========
 static unsigned long lastValidMocapTime = 0;
 
 // ===== Waypoint mission settings =====
@@ -213,6 +211,7 @@ void loop() {
 
   // SENSORS 
   readVL53L4CX();
+  
   logVerticalControl(); 
   
   logSensorData();          // 7. SD Log 
