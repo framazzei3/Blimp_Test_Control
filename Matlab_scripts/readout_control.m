@@ -1,96 +1,142 @@
-clc
-close all
-clear
+%% ============================
+%        INIT
+% ============================
+clc;
+close all;
+clear;
 
-% Legge il nuovo CSV
-T = readtable("20260123_103213.csv");
+addpath Data\
+
+%% ============================
+%        LOAD DATA
+% ============================
+% Legge il CSV
+% --- Nome file ---
+csv_file = "20260209_163822.csv"; % log only data from 09 Feb 2026
+T = readtable(csv_file);
 
 % Filtra solo ALTITUDE HOLD
-T_alt = T(strcmp(T.mode,"ALTITUDE_HOLD"), :);
+T_alt = T(strcmp(T.mode, "ALTITUDE_HOLD"), :);
 
-% --- Ricalcolo v_raw da z_meas (se vuoi confrontare) ---
-dt2 = diff(T_alt.millis) * 0.001;
-v_raw2 = diff(T_alt.z_meas) ./ dt2;
+%% ============================
+%        TIME VECTOR
+% ============================
+% time   = hh:mm:ss (NTP)
+% millis = Relative time Arduino
 
-T = 0.7958;
-alpha_v = 0.1 / (T + 0.1);  
-N= length(dt2);
-v_hat  = zeros(1,N);
+csv_file = "20260205_114534.csv";
 
-for k = 2:N-1
-    v_hat(k) = alpha_v * T_alt.v_raw(k) + (1 - alpha_v) * T_alt.v_hat(k-1);
-end
+% --- Extract the data ---
+date_str = extractBefore(csv_file, "_");   % "20260205"
 
-Fs=1/0.1;
-L = height(T_alt);
-Y = fft(T_alt.v_raw);
+% --- Converts in datetime ---
+file_date = datetime(date_str, ...
+                     'InputFormat', 'yyyyMMdd', ...
+                     'TimeZone', 'Europe/Zurich');
 
-y = lowpass(T_alt.v_raw,0.2,Fs);
+% --- Converts in string ---
+ntp_time_str = string(T_alt.time);
 
-figure()
-plot(Fs/L*(0:L-1),abs(Y),"LineWidth",3)
-title("Complex Magnitude of fft Spectrum")
-xlabel("f (Hz)")
-ylabel("|fft(X)|")
+% --- Datetime NTP (seconds) ---
+t_ntp = datetime( ...
+    datestr(file_date, 'yyyy-mm-dd') + " " + ntp_time_str, ...
+    'InputFormat', 'yyyy-MM-dd HH:mm:ss', ...
+    'TimeZone', 'Europe/Zurich');
 
-M = 5;
-z = T_alt.v_raw;
-N = length(z);
+% --- Calcola millisecondi relativi ---
+millis_rel = T_alt.millis - T_alt.millis(1);
 
-z_f = zeros(size(z));
+% --- Aggiunge millisecondi al datetime ---
+% t_plot = t_ntp + milliseconds(millis_rel);
+t_plot = millis_rel/1000;
 
-for k = 1:N
-    i_start = max(1, k-M+1);   % evita indici negativi
-    z_f(k) = mean(z(i_start:k));
-end
-
-figure
-plot(T_alt.millis, z, 'DisplayName','z raw'); hold on;
-plot(T_alt.millis, z_f, 'DisplayName','z filtered');
-legend; grid on;
-title('Media Mobile');
-
-
+% % --- Opzionale: forza il formato con millisecondi per la visualizzazione ---
+% t_plot.Format = 'yyyy-MM-dd HH:mm:ss.SSS';
 
 
 %% ============================
-%          PLOT 1
-% ==============================
-figure
-plot(T_alt.millis, T_alt.z_meas, '.', 'DisplayName', 'z\_meas');
-hold on
-plot(T_alt.millis, T_alt.z_ref, 'DisplayName', 'z\_ref');
+%   ACCELERATION
+% ============================
 
-xlabel('Time (ms)');
-ylabel('Altitude (m)');
-title('Altitude Hold: z meas vs z ref');
-ylim([0 2]);
-grid on
+figure;
+plot(t_plot, T_alt.de_v_dt,       'LineWidth', 2, 'DisplayName', 'v derivative');
+hold on;
+plot(t_plot, T_alt.de_v_dt_filt,  'LineWidth', 2, 'DisplayName', 'v derivative (filtered)');
+xlabel('Time (s)');
+ylabel('Vertical acceleration (m/s^2)');
+title('Acceleration');
+grid on;
+legend;
+
+figure;
+subplot(2,1,1)
+plot(t_plot, T_alt.bat_voltage,'LineWidth', 2, 'DisplayName', 'v derivative');
+xlabel('Time (s)');
+ylabel('(V)');
+grid on;
+legend;
+
+subplot(2,1,2)
+plot(t_plot, T_alt.bat_percent,'LineWidth', 2, 'DisplayName', 'v derivative');
+xlabel('Time (s)');
+ylabel('%');
+grid on;
+legend;
+
+% ---------- VELOCITY ERROR ----------
+subplot(2,1,1);
+plot(t_plot, T_alt.e_v, 'LineWidth', 2, 'DisplayName', 'e_v = v_{ref} - v_{hat}');
+hold on;
+ylabel('(m/s)');
+title('Velocity Tracking Error');
+grid on;
+legend;
+
+% ---------- INTEGRATED VELOCITY ERROR ----------
+subplot(2,1,2);
+plot(t_plot, T_alt.int_ev, 'LineWidth', 2, 'DisplayName', sprintf('I_{ev} = \\Sigma e_v \\Delta t = %.3f m', T_alt.int_ev(end)));
+xlabel('Time (s)');
+ylabel('(m/s)');
+title('Integrated Velocity Error (I_{ev} = \int e_v dt)');
+grid on;
 legend;
 
 %% ============================
-%          PLOT 2
-% ==============================
-figure
-plot(T_alt.millis, T_alt.v_hat, 'DisplayName','v\_hat');
-hold on
-plot(T_alt.millis, T_alt.v_ref, 'DisplayName','v\_ref');
-plot(T_alt.millis, T_alt.v_raw, 'DisplayName','v\_raw (log)');
-plot(T_alt.millis(2:end), v_raw2, 'DisplayName','v\_raw (recalc)');
+%   ALTITUDE & VELOCITY TRACKING
+% ============================
 
-xlabel('Time (ms)');
-ylabel('Vertical velocity (m/s)');
-title('Velocity Tracking');
-legend();
-grid on;
+figure;
 
-figure
-plot(T_alt.millis, T_alt.v_hat, 'DisplayName','v\_hat');
-hold on
-plot(T_alt.millis(2:end), v_hat, 'DisplayName','v\_hat_calc');
-plot(T_alt.millis, y, 'DisplayName','v\_hat_calc');
-xlabel('Time (ms)');
-ylabel('Vertical velocity (m/s)');
-title('Velocity Tracking');
-legend();
+% ---------- ALTITUDE ----------
+subplot(3,1,1);
+plot(t_plot, T_alt.z_meas, 'LineWidth', 2, 'DisplayName', 'z_{meas}');
+hold on;
+plot(t_plot, T_alt.z_ref,  'LineWidth', 2, 'DisplayName', 'z_{ref}');
+ylabel('Altitude (m)');
+title('Altitude Tracking');
 grid on;
+legend;
+
+% ---------- VELOCITY ----------
+subplot(3,1,2);
+plot(t_plot, T_alt.v_hat_butter, 'LineWidth', 2, 'DisplayName', 'v_{hat}');
+hold on;
+plot(t_plot, T_alt.v_ref,        'LineWidth', 2, 'DisplayName', 'v_{ref}');
+xlabel('Time (s)');
+ylabel('Velocity (m/s)');
+title('Velocity Tracking');
+grid on;
+legend;
+
+% ---------- CONTROL INPUT ----------
+subplot(3,1,3);
+plot(t_plot, T_alt.uz_pid, 'LineWidth', 2, 'DisplayName', 'u_z');
+xlabel('Time (s)');
+ylabel('Control');
+title('Control Input');
+grid on;
+legend;
+
+sgtitle(sprintf('Gains: Kp_v=%.2f, Kd_v=%.2f, Ki_v=%.2f, Kp_z=%.2f', ...
+    T_alt.Kp_up(1,1), T_alt.Kd_up(1,1), T_alt.Ki_up(1,1), T_alt.Kp_z(1,1)));
+
