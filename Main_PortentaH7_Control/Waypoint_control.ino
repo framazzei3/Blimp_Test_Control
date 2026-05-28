@@ -11,7 +11,12 @@ void loadCurrentWaypoint() {
   hoverX   = target.x;
   hoverY   = target.y;
   hoverZ   = target.z;
+  z_ref = target.z;
   hoverYaw = target.yaw;
+  
+  // Reset integratori
+  int_v = 0.0f;
+  int_w = 0.0f;
 
   log("[WAYPOINT] Target set to WP#" + String(currentWaypointIndex));
 }
@@ -28,19 +33,15 @@ void applyWaypointControl() {
   }
 
   // Carica il waypoint solo quando cambia
-  static int lastWaypointIndex = -1;
   if (currentWaypointIndex != lastWaypointIndex) {
     loadCurrentWaypoint();
     lastWaypointIndex = currentWaypointIndex;
     waypointReached = false;
   }
-  if (currentWaypointIndex != lastWaypointIndex) {
-    loadCurrentWaypoint();
-    lastWaypointIndex = currentWaypointIndex;
-  }
 
   // Esegui il controllo standard di hover
   applyHoverControl();
+  applyVerticalControl();
 
   // Calcola distanza residua                             
   float dx = target.x - mocapData.posX;
@@ -49,8 +50,10 @@ void applyWaypointControl() {
 
   distToTarget  = sqrt(dx*dx + dy*dy + dz*dz);
 
+  logCSVMissionRow();  // sincronizzato con il loop a 20Hz
+
   // Verifica raggiungimento waypoint
-  if (distToTarget < 0.2f) {   // soglia in metri
+  if (distToTarget < 0.4f) {   // soglia in metri (30 cm)
     waypointReached = true;
     log("[WAYPOINT] WP#" + String(currentWaypointIndex) + " reached");
 
@@ -64,26 +67,13 @@ void applyWaypointControl() {
       log("[MISSION] Mission complete");
 
       missionActive = false;
-      currentControlMode = MODE_HOVER;
-
-      // Reset target
-      target.x = 0.0f;
-      target.y = 0.0f;
-      target.z = 0.0f;
-      target.yaw = 0.0f;
-
+      currentControlMode = MODE_SAFETY;
+      hoverMode = HOVER_HOLD; // doppio check, gia viene chiamato in MODE_HOVER
+     
       distToTarget = 0.0f;
       waypointReached = false;
 
-      log("[MISSION] Mission stopped, target reset");
+      log("[MISSION] Switched to SAFETY MODE");
     }
   }
 }
-
-
-
-
-
-
-
-

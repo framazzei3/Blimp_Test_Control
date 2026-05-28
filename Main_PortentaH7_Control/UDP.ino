@@ -80,7 +80,7 @@ void handleUDPCommunication() {
             Ki_v = Ki_up;
             Kd_v = Kd_up;
 
-            log("Parametri aggiornati:");
+            log("Guadagni VERT aggiornati:");
             log("Kp_up = " + String(Kp_up, 3));
             log("Kd_up = " + String(Kd_up, 3));
             log("Ki_up = " + String(Ki_up, 3));
@@ -88,17 +88,42 @@ void handleUDPCommunication() {
 
         }
         else {
-            log("Formato GAINS non valido!");
+            log("Formato non valido!");
         }
       }
 
-      else if (command.startsWith("h:")) {  // New heading command
+      else if (command.startsWith("h:")) {  
         String yawStr = command.substring(2);
         yaw_ref = yawStr.toFloat();
-        
+        z_ref = 2.0f;
         currentControlMode = MODE_HEADING_HOLD;
         // log("[INFO] Command: Enter heading hold mode with target: " + String(yawSetpoint, 2) + "°");
       }
+
+      // Formato atteso: YAWGAINS:Kp_psi,Kp_w,Ki_w
+      else if (command.startsWith("yawgains:")) {
+
+        String values = command.substring(command.indexOf(':') + 1);
+
+        int idx1 = values.indexOf(',');
+        int idx2 = values.indexOf(',', idx1 + 1);
+
+        if (idx1 > 0 && idx2 > idx1) {
+
+            Kp_psi = values.substring(0, idx1).toFloat();
+            Kp_w   = values.substring(idx1 + 1, idx2).toFloat();
+            Ki_w   = values.substring(idx2 + 1).toFloat();
+
+            log("Guadagni YAW aggiornati:");
+            log("Kp_psi = " + String(Kp_psi, 3));
+            log("Kp_w   = " + String(Kp_w, 3));
+            log("Ki_w   = " + String(Ki_w, 3));
+        }
+        else {
+            log("Formato non valido!");
+        }
+      }
+
       else if (command.startsWith("hover:")) {
         int sep1 = command.indexOf(':');
         String values = command.substring(sep1 + 1);
@@ -111,7 +136,7 @@ void handleUDPCommunication() {
         }
 
         // Verifica che tutte le virgole siano state trovate
-        if (sep[1] > 0 && sep[2] > 0 && sep[3] > 0) {
+        if (sep[1] != -1 && sep[2] != -1 && sep[3] != -1) {
             // Estrai i valori
             hoverX = values.substring(0, sep[1]).toFloat();
             hoverY = values.substring(sep[1] + 1, sep[2]).toFloat();
@@ -123,10 +148,11 @@ void handleUDPCommunication() {
 
             currentControlMode = MODE_HOVER;
         } else {
-            log("[ERROR] Invalid HOVER command format. Expected: HOVER:X,Y,Z,YAW");
+            log("[ERROR] Invalid HOVER command format. Expected: hover:X,Y,Z,YAW");
             log("[DEBUG] Received: " + command);
         }
       }
+      
       else if (command.startsWith("mission:")) {
         String data = command.substring(8);  // Rimuove "mission:"
         waypointCount = 0;                   // Reset coda
@@ -180,17 +206,18 @@ void handleUDPCommunication() {
           }
         }
         
-
-          if (waypointCount > 0) {
-            currentWaypointIndex = 0;
-            waypointReached = false;
-            missionActive = true;
-            currentControlMode = MODE_WAYPOINT;
-            log("[MISSION] Loaded " + String(waypointCount) + " waypoints, starting mission.");
-          } else {
-            log("[ERROR] No valid waypoint parsed from: " + command);
+        if (waypointCount > 0) {
+          currentWaypointIndex = 0;
+          lastWaypointIndex = -1;
+          waypointReached = false;
+          missionActive = true;
+          currentControlMode = MODE_WAYPOINT;
+          log("[MISSION] Loaded " + String(waypointCount) + " waypoints, starting mission.");
+        } else {
+          log("[ERROR] No valid waypoint parsed from: " + command);
         }
       }
+
       else if (command.startsWith("qtm:")) {
         String data = command.substring(4); // Rimuove "qtm:"
         float values[6];
@@ -219,14 +246,14 @@ void handleUDPCommunication() {
           }
           if (anyNaN) {
             mocapData.mocapValid = false;
-            // Reset a NaN quando ricevi dati corrotti
-            mocapData.posX = NAN;
-            mocapData.posY = NAN;
-            mocapData.posZ = NAN;
-            mocapData.roll = NAN;
-            mocapData.pitch = NAN;
-            mocapData.yaw = NAN;
-            mocapData.mocapValid = false;                
+
+            // Mantieni ultimo valore buono
+            mocapData.posX = mocapData.lastPosX;
+            mocapData.posY = mocapData.lastPosY;
+            mocapData.posZ = mocapData.lastPosZ;
+            mocapData.roll = mocapData.lastRoll;
+            mocapData.pitch = mocapData.lastPitch;
+            mocapData.yaw = mocapData.lastYaw;             
           } else {
             // Update motion capture data
             mocapData.posX = values[0];
@@ -235,7 +262,16 @@ void handleUDPCommunication() {
             mocapData.roll = values[3];
             mocapData.pitch = values[4];
             mocapData.yaw = values[5];
+            
             mocapData.mocapValid = true; 
+
+            // Save last valid
+            mocapData.lastPosX = mocapData.posX;
+            mocapData.lastPosY = mocapData.posY;
+            mocapData.lastPosZ = mocapData.posZ;
+            mocapData.lastRoll = mocapData.roll;
+            mocapData.lastPitch = mocapData.pitch;
+            mocapData.lastYaw = mocapData.yaw;
           }
         } else {
             log("[ERROR] Invalid QTM packet (expected 6 values, got " + String(idx) + "): " + command);
@@ -281,37 +317,5 @@ void parseJoystickPacket(const char* packet) {
     log("Error: Failed to parse joystick packet. Check format.");
   }
 }
-
-// char udpBuffer[256];   // Assicurati che sia abbastanza grande
-
-// // Costruisci la stringa CSV esattamente come su SD
-// snprintf(udpBuffer, sizeof(udpBuffer),
-//         "%lu,%s,%s,"         // timestamp, time string, mode name
-//         "%.2f,%.1f,"         // battery
-//         "%.4f,"              // dt
-//         "%.4f,%.4f,%.4f,"    // velocities
-//         "%.4f,%.4f,"         // altitude
-//         "%.4f,%.4f,%.4f,%.4f,%.4f,"  // PID
-//         "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f," // gains
-//         "%.4f,"              // ToF
-//         "%.4f,%.4f,%.4f",    // thrusts
-//         currentTime, 
-//         getCurrentTimeString().c_str(), 
-//         getModeName(currentControlMode).c_str(),
-//         batteryStatus.voltage,
-//         batteryStatus.percent,
-//         dt_vert,
-//         v_raw, v_hat_butter, v_ref,
-//         z_ref, z_meas,
-//         e_v, int_ev, de_v_dt, de_v_dt_filt, uz_pid,
-//         Kp_up, Ki_up, Kd_up, Kp_down, Ki_down, Kd_down, Kp_z,
-//         tofAltitude_m,
-//         leftThrust, rightThrust, verticalThrust
-// );
-
-// // Invia via UDP
-// log(String(udpBuffer));
-
-
 
 

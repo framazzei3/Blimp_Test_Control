@@ -41,10 +41,13 @@ void handleControlMode() {
 
     case MODE_HEADING_HOLD:
     if (!modeChangeLogged) {
-        log("[MODE] Entered HEADING HOLD mode with target: " + String(yaw_ref) + "m");
+        log("[MODE] Entered HEADING HOLD mode with target: " + String(yaw_ref) + "deg");
+        setupVerticalControl(); 
+        setupHeadingControl();
         modeChangeLogged = true;
       }
-      applyHeadingPID();
+      applyVerticalControl();
+      applyHeadingControl();
       break;
 
     case MODE_HOVER:
@@ -53,15 +56,22 @@ void handleControlMode() {
             "m, Y=" + String(hoverY, 2) + 
             "m, Z=" + String(hoverZ, 2) + 
             "m, Yaw=" + String(hoverYaw, 1) + "°");
+        setupHoverControl();
+        setupVerticalControl();
+        hoverMode = HOVER_HOLD;
         modeChangeLogged = true;
       }
-
       applyHoverControl(); 
+      applyVerticalControl();
       break;
 
     case MODE_WAYPOINT:
     if (!modeChangeLogged) {
         log("[MODE] Entered WAYPOINT mode");
+        setupHoverControl();
+        setupVerticalControl();
+        hoverMode = HOVER_PASS;
+        lastWaypointIndex = -1; 
         modeChangeLogged = true;
       }
       applyWaypointControl();
@@ -77,23 +87,40 @@ void handleControlMode() {
   }
 }
 
-// Funzione dedicata per leggere la batteria
 void readBattery() {
-  int rawValue = analogRead(voltagePin);
-  float sensorVoltage = (rawValue * adcReference) / adcMax;
-  batteryStatus.voltage = sensorVoltage * scaleFactor;
-  batteryStatus.percent = getBatteryPercentage(batteryStatus.voltage);
+    const int samples = 16;
+    long sum = 0;
+    for (int i = 0; i < samples; i++) {
+        sum += analogRead(voltagePin);
+        delay(1);
+    }
+    int rawValue = sum / samples;
+
+    float sensorVoltage = (rawValue * adcReference) / adcMax;
+    float rawVoltage = sensorVoltage * scaleFactor;
+
+    // Filtro EMA — ammorbidisce i picchi di rumore
+    if (filteredVoltage == 0.0) filteredVoltage = rawVoltage;  // init
+    filteredVoltage = alpha * rawVoltage + (1.0 - alpha) * filteredVoltage;
+
+    batteryStatus.voltage = filteredVoltage;
+    batteryStatus.percent = getBatteryPercentage(filteredVoltage);
+
+    // Cutoff DOPO il filtro — non triggera per rumore
+    if (batteryStatus.voltage < 6.4) {
+      currentControlMode = MODE_SAFETY;
+      log("[BATTERY] Critica: " + String(batteryStatus.voltage, 2) + "V — SAFETY attivato");
+    }
 }
 
-// Percentuale batteria
 float getBatteryPercentage(float voltage) {
-  const float V_min = 6.6;  // 0% (scarica)
-  const float V_max = 8.4;  // 100% (carica)
+    const float V_min = 6.3;
+    const float V_max = 8.4;
 
-  if (voltage < V_min) voltage = V_min;
-  if (voltage > V_max) voltage = V_max;
+    if (voltage <= V_min) return 0.0;
+    if (voltage >= V_max) return 100.0;
 
-  return (voltage - V_min) / (V_max - V_min) * 100.0;
+    return (voltage - V_min) / (V_max - V_min) * 100.0;
 }
 
 // // Safety check loop
@@ -157,6 +184,7 @@ String getModeName(ControlMode mode) {
         case MODE_ALTITUDE_HOLD: return "ALTITUDE_HOLD";
         case MODE_HEADING_HOLD:  return "HEADING_HOLD";
         case MODE_HOVER:         return "HOVER";
+        case MODE_WAYPOINT:      return "MODE_WAYPOINT";
         default:                 return "UNKNOWN";
     }
 }

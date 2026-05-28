@@ -20,6 +20,7 @@ mbed::FATFileSystem fs("fs");
 bool sdCardInitialized = false;
 bool sdLoggingEnabled = false;
 static String filename = ""; // global
+static String filenameHover = "";  // file separato per la missione
 
 // ========== Motor Configuration via PCA9685 ==========
 // DRV8833 #1 - Vertical Motors
@@ -58,7 +59,7 @@ const long utcOffsetSummer = 7200; // UTC+2 (CEST)
 const char* NTP_SERVER = "pool.ntp.org";
 bool ntpInitialized = false;
 WiFiUDP ntpUdp; 
-NTPClient ntpClient(ntpUdp, NTP_SERVER, utcOffsetWinter);
+NTPClient ntpClient(ntpUdp, NTP_SERVER, utcOffsetSummer);
 static unsigned long lastNTPUpdate = 0;
 const unsigned long ntpInterval = 60000; // 60 seconds of NTP update
 
@@ -85,6 +86,14 @@ enum ControlMode {
 
 ControlMode currentControlMode = MODE_SAFETY;
 
+// Globale
+enum HoverMode {
+    HOVER_HOLD,      // Mantieni posizione (con zona morta e rotazione finale)
+    HOVER_PASS       // Passa attraverso waypoint (senza fermarsi)
+};
+
+HoverMode hoverMode = HOVER_HOLD;  // default
+
 // ========== Manual Mode Settings ==========
 float manualControlValues[3] = {0}; // Stores surge, yaw, heave values
 
@@ -101,6 +110,9 @@ const float scaleFactor = 5.0;   // Fattore di scala del partitore
 const float adcReference = 3.3;  // Tensione di riferimento ADC
 const int adcMax = 4095;         // Risoluzione ADC (12 bit per Portenta H7)
 
+float filteredVoltage = 0.0;
+const float alpha = 0.1;
+
 struct BatteryStatus {
     float voltage = 0.0;
     float percent = 0.0;
@@ -108,24 +120,24 @@ struct BatteryStatus {
 
 BatteryStatus batteryStatus;  // ora voltage e percent partono già da 0.0
 static unsigned long lastBatteryRead = 0;
-const unsigned long batteryInterval = 500;  // every 0.5 seconds
+const unsigned long batteryInterval = 1000;  // every 1 seconds
 
 
 // =====6 DoF vector from QTM ========
 struct MotionCaptureData {
-  float posX = NAN;
-  float posY = NAN;
-  float posZ = NAN;
-  float roll = NAN;
-  float pitch = NAN;
-  float yaw = NAN;
-  bool mocapValid = false;
+    float posX, posY, posZ;
+    float roll, pitch, yaw;
+    bool mocapValid = false;
+
+    float lastPosX, lastPosY, lastPosZ;
+    float lastRoll, lastPitch, lastYaw;
 };
 
 MotionCaptureData mocapData;
-static unsigned long lastValidMocapTime = 0;
 
-// ===== Waypoint mission settings =====
+//==================================================
+//              WAYPOINT MISSION CONTROL
+//==================================================
 struct Waypoint {
   float x;
   float y;
@@ -141,6 +153,7 @@ Waypoint waypointQueue[MAX_WAYPOINTS];
 
 int waypointCount = 0;
 int currentWaypointIndex = 0;
+int lastWaypointIndex = -1;
 
 bool waypointReached = false;
 bool missionActive = false;
@@ -198,6 +211,7 @@ void loop() {
   if (millis() - lastBatteryRead >= batteryInterval) {
       lastBatteryRead = millis();
       readBattery();
+      log("[BATTERY] " + String(batteryStatus.voltage, 2) + "V — " + String(batteryStatus.percent, 1) + "%");
   }
 
   handleUDPCommunication();    // 2. Handle UDP communication
@@ -209,9 +223,7 @@ void loop() {
   // SENSORS 
   readVL53L4CX();
   
-  logVerticalControl(); 
-  
-  logSensorData();          // 7. SD Log 
+  // logSensorData();           // 7. SD Log 
 
   // Debug print
   // printMocapData();
